@@ -1,0 +1,3 @@
+[submodule "src/ncurses"]
+	path = src/ncurses
+	url = https://github.com/RaphGL/Ncurses.odin
