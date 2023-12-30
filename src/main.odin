@@ -26,18 +26,22 @@ main :: proc() {
 
 	for {
 		nc.werase(tb.win)
+
 		textbuffer_draw(tb)
 		panel_draw(panel)
 
-		nc.wrefresh(tb.win)
 		nc.refresh()
 
 		c := nc.getch()
 		switch c {
-		case 'j':
-			textbuffer_view_move(&tb, .Down)
 		case 'k':
-			textbuffer_view_move(&tb, .Up)
+			textbuffer_cursor_move(&tb, .Up)
+		case 'j':
+			textbuffer_cursor_move(&tb, .Down)
+		case 'h':
+			textbuffer_cursor_move(&tb, .Left)
+		case 'l':
+			textbuffer_cursor_move(&tb, .Right)
 		}
 
 	}
