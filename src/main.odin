@@ -8,9 +8,10 @@ import "core:strings"
 import nc "ncurses/src"
 
 TextBuffer :: struct {
-	win:      ^nc.Window,
-	rows:     [dynamic]string,
-	col, row: c.int,
+	win:  ^nc.Window,
+	rows: [dynamic]string,
+	row:  c.int, // the first row in view
+	view: []string,
 }
 
 textbuffer_new :: proc(filepath: string) -> (tb: TextBuffer, success: bool) {
@@ -22,13 +23,51 @@ textbuffer_new :: proc(filepath: string) -> (tb: TextBuffer, success: bool) {
 
 	h, w := nc.getmaxyx(nc.stdscr)
 	bufwin := nc.newwin(h - 1, w, 0, 0)
-	return TextBuffer{rows = slice.clone_to_dynamic(file_contents), win = bufwin}, true
+	rows := slice.clone_to_dynamic(file_contents)
+	view: []string
+	if len(rows) > int(h) {
+		view = rows[:h]
+	} else {
+		view = rows[:]
+	}
+	return TextBuffer{rows = rows, win = bufwin, view = view}, true
 }
 
 textbuffer_free :: proc(tb: TextBuffer) -> bool {
 	nc.werase(tb.win)
 	nc.delwin(tb.win)
 	return delete(tb.rows) == .None
+}
+
+Direction :: enum {
+	Up,
+	Down,
+	Left,
+	Right,
+}
+
+// creates a slice of the size of the textbuffer window
+textbuffer_move :: proc(tb: ^TextBuffer, dir: Direction) {
+	h, w := nc.getmaxyx(tb.win)
+	#partial switch dir {
+	case .Up:
+		if tb.row > 0 do tb.row -= 1
+	case .Down:
+		if int(tb.row + h) < len(tb.rows) - 1 do tb.row += 1
+	case:
+		panic("Other directions are not supported")
+	}
+
+	tb.view = tb.rows[tb.row:tb.row + h]
+}
+
+textbuffer_draw :: proc(tb: TextBuffer) {
+	for row, col in tb.view {
+		col := c.int(col)
+		nc.wmove(tb.win, col, 0)
+		nc.wprintw(tb.win, "%s", row)
+	}
+
 }
 
 main :: proc() {
@@ -48,12 +87,20 @@ main :: proc() {
 	defer textbuffer_free(tb)
 
 
-		for row in tb.rows {
-			nc.wprintw(tb.win, "%s\n", row)
-		}
+	for {
+		nc.werase(tb.win)
+		textbuffer_draw(tb)
 
 		nc.wrefresh(tb.win)
 		nc.refresh()
 
-	nc.wgetch(tb.win)
+		c := nc.wgetch(tb.win)
+		switch c {
+		case 'j':
+			textbuffer_move(&tb, .Down)
+		case 'k':
+			textbuffer_move(&tb, .Up)
+		}
+
+	}
 }
