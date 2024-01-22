@@ -9,6 +9,7 @@ main :: proc() {
 	nc.initscr()
 	nc.noecho()
 	nc.curs_set(0)
+	nc.keypad(nc.stdscr, true)
 	nc.cbreak()
 	nc.refresh()
 	defer nc.endwin()
@@ -25,23 +26,25 @@ main :: proc() {
 	defer panel_delete(panel)
 
 	for {
-		nc.werase(tb.win)
+		defer nc.werase(tb.win)
+		defer nc.refresh()
 
 		textbuffer_draw(tb)
 		panel_draw(panel)
 
-		nc.refresh()
 
 		c := nc.getch()
 		switch c {
-		case 'k':
+		case nc.KEY_UP:
 			textbuffer_cursor_move(&tb, .Up)
-		case 'j':
+		case nc.KEY_DOWN:
 			textbuffer_cursor_move(&tb, .Down)
-		case 'h':
+		case nc.KEY_LEFT:
 			textbuffer_cursor_move(&tb, .Left)
-		case 'l':
+		case nc.KEY_RIGHT:
 			textbuffer_cursor_move(&tb, .Right)
+		case:
+			textbuffer_append_char(&tb, rune(c))
 		}
 
 	}

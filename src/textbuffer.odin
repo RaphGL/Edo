@@ -4,12 +4,13 @@ import "core:c"
 import "core:os"
 import "core:slice"
 import "core:strings"
+import "core:unicode/utf8"
 import nc "ncurses/src"
 
 TextBuffer :: struct {
 	filepath:    string,
 	win:         ^nc.Window,
-	linenum_win: ^nc.Window, // todo: draw line numbers and create window
+	linenum_win: ^nc.Window,
 	rows:        [dynamic]string,
 	start_view:  c.int, // the first row in view
 	view:        []string,
@@ -30,12 +31,7 @@ textbuffer_new :: proc(filepath: string) -> (tb: TextBuffer, success: bool) {
 	rows := slice.clone_to_dynamic(file_contents)
 
 	// -- create a text view that fits the window
-	view: []string
-	if len(rows) > int(h) {
-		view = rows[:h]
-	} else {
-		view = rows[:]
-	}
+	view := rows[:h] if len(rows) > int(h) else rows[:]
 	return TextBuffer{filepath = filepath, rows = rows, win = bufwin, view = view}, true
 }
 
@@ -44,6 +40,35 @@ textbuffer_free :: proc(tb: TextBuffer) -> bool {
 	nc.delwin(tb.win)
 	return delete(tb.rows) == .None
 }
+
+// inserts a new char into the current row and column in the textbuffer
+textbuffer_append_char :: proc(tb: ^TextBuffer, char: rune) {
+	curr_row := tb.rows[tb.row]
+
+	char_str := utf8.runes_to_string([]rune{char})
+	defer delete(char_str)
+
+	switch {
+	// insert at the start
+	case len(curr_row) == 0:
+		curr_row = strings.clone(char_str)
+	// insert in the middle
+	case int(tb.col) == len(curr_row):
+		curr_row = strings.join([]string{curr_row, char_str}, "")
+	// insert at the end
+	case int(tb.col) < len(curr_row):
+		curr_row = strings.join([]string{curr_row[:tb.col], char_str, curr_row[tb.col:]}, "")
+	case:
+		panic("unknown case found")
+	}
+
+	// go to next col after insertion is done
+	tb.col += 1
+	tb.rows[tb.row] = curr_row
+}
+
+// TODO: removes char in the current row and column
+textbuffer_remove_char :: proc(tb: ^TextBuffer)
 
 textbuffer_get_cursor_coordinates :: #force_inline proc(tb: TextBuffer) -> (y, x: c.int) {
 	return tb.row - tb.start_view, tb.col
@@ -56,21 +81,31 @@ Direction :: enum {
 	Right,
 }
 
+// todo: handle tabs
 textbuffer_draw :: proc(tb: TextBuffer) {
 	// -- draw buffer content
 	for row, col in tb.view {
 		col := c.int(col)
 		nc.wmove(tb.win, col, 0)
-		nc.wprintw(tb.win, "%s", row)
+		for char in row {
+			if char == '\t' {
+				nc.waddch(tb.win, ' ')
+			} else {
+				nc.waddch(tb.win, c.uint(char))
+			}
+		}
 	}
 
 	// -- draw cursor
 	nc.wattron(tb.win, nc.A_REVERSE)
 	row := tb.rows[tb.row]
 	ch: c.uint
-	if int(tb.col) > len(row) - 1 {
+	switch {
+	case int(tb.col) > len(row) - 1:
 		ch = ' '
-	} else {
+	case row[tb.col] == '\t':
+		ch = ' '
+	case:
 		ch = c.uint(row[tb.col])
 	}
 
@@ -118,8 +153,9 @@ textbuffer_cursor_move :: proc(tb: ^TextBuffer, dir: Direction) {
 		if int(tb.col) < len(tb.rows[tb.row]) do tb.col += 1
 	}
 
+	// -- prevent cursor from overflowign row
 	rowlen := c.int(len(tb.rows[tb.row]))
 	if tb.col > rowlen {
-		tb.col = rowlen
+		tb.col = rowlen if rowlen >= 0 else 0
 	}
 }
