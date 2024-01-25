@@ -28,7 +28,13 @@ textbuffer_new :: proc(filepath: string) -> (tb: TextBuffer, success: bool) {
 	// -- initialize struct fields
 	h, w := nc.getmaxyx(nc.stdscr)
 	bufwin := nc.newwin(h - 1, w, 0, 0)
-	rows := slice.clone_to_dynamic(file_contents)
+	rows: [dynamic]string
+	if len(file_contents) != 0 {
+		rows = slice.clone_to_dynamic(file_contents)
+	} else {
+		rows = make([dynamic]string)
+		append(&rows, "")
+	}
 
 	// -- create a text view that fits the window
 	view := rows[:h] if len(rows) > int(h) else rows[:]
@@ -38,6 +44,10 @@ textbuffer_new :: proc(filepath: string) -> (tb: TextBuffer, success: bool) {
 textbuffer_free :: proc(tb: TextBuffer) -> bool {
 	nc.werase(tb.win)
 	nc.delwin(tb.win)
+	for row in tb.rows {
+		if delete(row) != .None do return false
+	}
+
 	return delete(tb.rows) == .None
 }
 
@@ -67,8 +77,26 @@ textbuffer_append_char :: proc(tb: ^TextBuffer, char: rune) {
 	tb.rows[tb.row] = curr_row
 }
 
-// TODO: removes char in the current row and column
-textbuffer_remove_char :: proc(tb: ^TextBuffer)
+// removes char in the current row and column
+textbuffer_remove_char :: proc(tb: ^TextBuffer) {
+	curr_row := tb.rows[tb.row]
+	if tb.col > 0 {
+		curr_row = strings.join([]string{curr_row[:tb.col - 1], curr_row[tb.col:]}, "")
+		tb.col -= 1
+	} else {
+		// TODO: merge lines when chars are removed from the beginning of a row
+		tb.row -= 1
+		curr_row = tb.rows[tb.row]
+		tb.col = c.int(len(curr_row))
+	}
+
+	tb.rows[tb.row] = curr_row
+}
+
+// TODO: insert a new row after the current row
+textbuffer_insert_row :: proc(tb: ^TextBuffer)
+// TODO: remove current row from textbuffer
+textbuffer_remove_row :: proc(tb: ^TextBuffer)
 
 textbuffer_get_cursor_coordinates :: #force_inline proc(tb: TextBuffer) -> (y, x: c.int) {
 	return tb.row - tb.start_view, tb.col
@@ -81,7 +109,7 @@ Direction :: enum {
 	Right,
 }
 
-// todo: handle tabs
+// TODO: handle tabs
 textbuffer_draw :: proc(tb: TextBuffer) {
 	// -- draw buffer content
 	for row, col in tb.view {
@@ -132,6 +160,7 @@ textbuffer_view_move :: proc(tb: ^TextBuffer, dir: Direction) {
 	tb.view = tb.rows[tb.start_view:tb.start_view + h]
 }
 
+// handles how cursor ought to move within the textbuffer and to prevent segfaults
 textbuffer_cursor_move :: proc(tb: ^TextBuffer, dir: Direction) {
 	SPACE_FROM_EDGES :: 6
 	h, w := nc.getmaxyx(tb.win)
@@ -147,10 +176,22 @@ textbuffer_cursor_move :: proc(tb: ^TextBuffer, dir: Direction) {
 		if win_y == h - SPACE_FROM_EDGES do textbuffer_view_move(tb, .Down)
 
 	case .Left:
-		if tb.col > 0 do tb.col -= 1
+		if tb.col > 0 {
+			tb.col -= 1
+			// wrap around to previous line
+		} else if int(tb.row) > 0 {
+			tb.row -= 1
+			tb.col = c.int(len(tb.rows[tb.row]))
+		}
 
 	case .Right:
-		if int(tb.col) < len(tb.rows[tb.row]) do tb.col += 1
+		if int(tb.col) < len(tb.rows[tb.row]) {
+			tb.col += 1
+			// wrap around to next line
+		} else if int(tb.row) < len(tb.rows) - 1 {
+			tb.row += 1
+			tb.col = 0
+		}
 	}
 
 	// -- prevent cursor from overflowign row

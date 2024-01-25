@@ -43,6 +43,8 @@ main :: proc() {
 			textbuffer_cursor_move(&tb, .Left)
 		case nc.KEY_RIGHT:
 			textbuffer_cursor_move(&tb, .Right)
+		case nc.KEY_BACKSPACE:
+			textbuffer_remove_char(&tb)
 		case:
 			textbuffer_append_char(&tb, rune(c))
 		}
