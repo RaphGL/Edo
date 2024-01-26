@@ -32,7 +32,6 @@ main :: proc() {
 		textbuffer_draw(tb)
 		panel_draw(panel)
 
-
 		c := nc.getch()
 		switch c {
 		case nc.KEY_UP:
@@ -45,9 +44,10 @@ main :: proc() {
 			textbuffer_cursor_move(&tb, .Right)
 		case nc.KEY_BACKSPACE:
 			textbuffer_remove_char(&tb)
+		case nc.KEY_ENTER:
+		// textbuffer_insert_row(&tb)
 		case:
 			textbuffer_append_char(&tb, rune(c))
 		}
-
 	}
 }

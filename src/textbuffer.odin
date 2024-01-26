@@ -51,6 +51,9 @@ textbuffer_free :: proc(tb: TextBuffer) -> bool {
 	return delete(tb.rows) == .None
 }
 
+// TODO
+textbuffer_save_to_file :: proc(tb: TextBuffer, filepath: string) -> bool
+
 // inserts a new char into the current row and column in the textbuffer
 textbuffer_append_char :: proc(tb: ^TextBuffer, char: rune) {
 	curr_row := tb.rows[tb.row]
@@ -95,6 +98,7 @@ textbuffer_remove_char :: proc(tb: ^TextBuffer) {
 
 // TODO: insert a new row after the current row
 textbuffer_insert_row :: proc(tb: ^TextBuffer)
+
 // TODO: remove current row from textbuffer
 textbuffer_remove_row :: proc(tb: ^TextBuffer)
 
@@ -144,7 +148,7 @@ textbuffer_draw :: proc(tb: TextBuffer) {
 	nc.wrefresh(tb.win)
 }
 
-// creates a slice of the size of the textbuffer window
+// creates a view slice with the contents that ought to be displayed for the current cursor position
 @(private = "file")
 textbuffer_view_move :: proc(tb: ^TextBuffer, dir: Direction) {
 	h, w := nc.getmaxyx(tb.win)
@@ -152,7 +156,7 @@ textbuffer_view_move :: proc(tb: ^TextBuffer, dir: Direction) {
 	case .Up:
 		if tb.start_view > 0 {tb.start_view -= 1} else {return}
 	case .Down:
-		if int(tb.start_view + h) < len(tb.rows) - 1 {tb.start_view += 1} else {return}
+		if int(tb.start_view + h) < len(tb.rows) {tb.start_view += 1} else {return}
 	case:
 		panic("Other directions are not supported")
 	}
@@ -164,16 +168,24 @@ textbuffer_view_move :: proc(tb: ^TextBuffer, dir: Direction) {
 textbuffer_cursor_move :: proc(tb: ^TextBuffer, dir: Direction) {
 	SPACE_FROM_EDGES :: 6
 	h, w := nc.getmaxyx(tb.win)
-	win_y, _ := textbuffer_get_cursor_coordinates(tb^)
+	cur_y, _ := textbuffer_get_cursor_coordinates(tb^)
+
+	scroll_up_if_on_edge :: #force_inline proc(tb: ^TextBuffer, cur_y: c.int) {
+		if cur_y == SPACE_FROM_EDGES do textbuffer_view_move(tb, .Up)
+	}
+
+	scroll_down_if_on_edge :: #force_inline proc(tb: ^TextBuffer, cur_y: c.int, maxx: c.int) {
+		if cur_y == maxx - SPACE_FROM_EDGES do textbuffer_view_move(tb, .Down)
+	}
 
 	switch dir {
 	case .Up:
 		if tb.row > 0 do tb.row -= 1
-		if win_y == SPACE_FROM_EDGES do textbuffer_view_move(tb, .Up)
+		scroll_up_if_on_edge(tb, cur_y)
 
 	case .Down:
 		if int(tb.row) < len(tb.rows) - 1 do tb.row += 1
-		if win_y == h - SPACE_FROM_EDGES do textbuffer_view_move(tb, .Down)
+		scroll_down_if_on_edge(tb, cur_y, h)
 
 	case .Left:
 		if tb.col > 0 {
@@ -182,6 +194,7 @@ textbuffer_cursor_move :: proc(tb: ^TextBuffer, dir: Direction) {
 		} else if int(tb.row) > 0 {
 			tb.row -= 1
 			tb.col = c.int(len(tb.rows[tb.row]))
+			scroll_up_if_on_edge(tb, cur_y)
 		}
 
 	case .Right:
@@ -191,6 +204,7 @@ textbuffer_cursor_move :: proc(tb: ^TextBuffer, dir: Direction) {
 		} else if int(tb.row) < len(tb.rows) - 1 {
 			tb.row += 1
 			tb.col = 0
+			scroll_down_if_on_edge(tb, cur_y, h)
 		}
 	}
 
