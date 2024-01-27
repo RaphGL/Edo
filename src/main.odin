@@ -26,7 +26,6 @@ main :: proc() {
 	defer panel_delete(panel)
 
 	for {
-		defer nc.werase(tb.win)
 		defer nc.refresh()
 
 		textbuffer_draw(tb)
@@ -36,16 +35,26 @@ main :: proc() {
 		switch c {
 		case nc.KEY_UP:
 			textbuffer_cursor_move(&tb, .Up)
+
 		case nc.KEY_DOWN:
 			textbuffer_cursor_move(&tb, .Down)
+
 		case nc.KEY_LEFT:
 			textbuffer_cursor_move(&tb, .Left)
+
 		case nc.KEY_RIGHT:
 			textbuffer_cursor_move(&tb, .Right)
+
 		case nc.KEY_BACKSPACE:
 			textbuffer_remove_char(&tb)
+
 		case nc.KEY_ENTER:
 		// textbuffer_insert_row(&tb)
+
+		case nc.KEY_RESIZE:
+			textbuffer_fit_newsize(&tb)
+			panel_fit_newsize(panel)
+
 		case:
 			textbuffer_append_char(&tb, rune(c))
 		}

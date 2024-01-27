@@ -21,7 +21,16 @@ panel_delete :: proc(panel: Panel) {
 	nc.delwin(panel.win)
 }
 
+panel_fit_newsize :: proc(panel: Panel) {
+	h, w := nc.getmaxyx(nc.stdscr)
+	nc.wresize(panel.win, 1, w)
+	nc.mvwin(panel.win, h - 1, 0)
+}
+
 panel_draw :: proc(panel: Panel) {
+	nc.werase(panel.win)
+	defer nc.wrefresh(panel.win)
+
 	_, w := nc.getmaxyx(panel.win)
 	for i in 0 ..< w {
 		nc.waddch(panel.win, ' ')
