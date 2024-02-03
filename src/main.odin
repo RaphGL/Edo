@@ -32,7 +32,13 @@ main :: proc() {
 		panel_draw(panel)
 
 		c := nc.getch()
-		switch c {
+		key_str := string(nc.keyname(c))
+		if key_str[0] == '^' {
+			switch key_str[1] {
+			case 'X':
+				textbuffer_save_to_file(tb)
+			}
+		} else do switch c {
 		case nc.KEY_UP:
 			textbuffer_cursor_move(&tb, .Up)
 

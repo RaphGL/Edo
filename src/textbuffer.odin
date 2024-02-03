@@ -63,8 +63,24 @@ textbuffer_fit_newsize :: proc(tb: ^TextBuffer) {
 	textbuffer_view_update(tb, cur_y)
 }
 
-// TODO
-textbuffer_save_to_file :: proc(tb: TextBuffer, filepath: string) -> bool
+// todo: use this function to add saving functionality
+textbuffer_save_to_file :: proc(tb: TextBuffer) -> bool {
+	file, err := os.open(tb.filepath, os.O_CREATE | os.O_WRONLY, 0o644)
+	if err != os.ERROR_NONE do return false
+	defer os.close(file)
+
+	sb := strings.builder_make()
+	defer strings.builder_destroy(&sb)
+
+	for row in tb.rows {
+		strings.write_string(&sb, row)
+		strings.write_rune(&sb, '\n')
+	}
+
+	file_content := strings.to_string(sb)
+	_, err = os.write_string(file, file_content)
+	return err == os.ERROR_NONE
+}
 
 // inserts a new char into the current row and column in the textbuffer
 textbuffer_append_char :: proc(tb: ^TextBuffer, char: rune) {
@@ -98,7 +114,7 @@ textbuffer_remove_char :: proc(tb: ^TextBuffer) {
 	if tb.col > 0 {
 		curr_row = strings.join([]string{curr_row[:tb.col - 1], curr_row[tb.col:]}, "")
 		tb.col -= 1
-	} else {
+	} else if tb.row > 0 {
 		// TODO: merge lines when chars are removed from the beginning of a row
 		tb.row -= 1
 		curr_row = tb.rows[tb.row]
@@ -188,7 +204,6 @@ textbuffer_view_update :: proc(tb: ^TextBuffer, cur_y: c.int) {
 	win_h, _ := nc.getmaxyx(tb.win)
 
 	// -- make sure the cursor is still inside the view
-	rowlen := c.int(len(tb.rows))
 	if cur_y >= win_h {
 		tb.start_view = tb.row - win_h + SPACE_FROM_EDGES
 	} else if cur_y < 0 {
@@ -200,7 +215,8 @@ textbuffer_view_update :: proc(tb: ^TextBuffer, cur_y: c.int) {
 
 
 	view_bottom := tb.start_view + win_h
-	if view_bottom >= c.int(len(tb.rows)) do view_bottom = c.int(len(tb.rows)) - 1
+	rowlen := c.int(len(tb.rows))
+	if view_bottom >= rowlen do view_bottom = rowlen - 1
 
 	tb.view = tb.rows[tb.start_view:view_bottom]
 }
