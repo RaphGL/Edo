@@ -32,13 +32,7 @@ main :: proc() {
 		panel_draw(panel)
 
 		c := nc.getch()
-		key_str := string(nc.keyname(c))
-		if key_str[0] == '^' {
-			switch key_str[1] {
-			case 'X':
-				textbuffer_save_to_file(tb)
-			}
-		} else do switch c {
+		switch c {
 		case nc.KEY_UP:
 			textbuffer_cursor_move(&tb, .Up)
 
@@ -54,16 +48,24 @@ main :: proc() {
 		case nc.KEY_BACKSPACE:
 			textbuffer_remove_char(&tb)
 
-		case nc.KEY_ENTER:
-			textbuffer_insert_row(&tb)
+		case nc.KEY_ENTER, '\n':
+			textbuffer_breakline(&tb)
 
 		case nc.KEY_RESIZE:
 			textbuffer_fit_newsize(&tb)
 			panel_fit_newsize(panel)
 
 		case:
-			textbuffer_append_char(&tb, rune(c))
+			key_str := string(nc.keyname(c))
+			// handle control combos
+			if key_str[0] == '^' {switch key_str[1] {
+				case 'X':
+					textbuffer_save_to_file(tb)
+				}
+			} else {
+				// insert regular characters
+				textbuffer_append_char(&tb, rune(c))
+			}
 		}
 	}
 }
-

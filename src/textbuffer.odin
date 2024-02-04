@@ -172,18 +172,58 @@ textbuffer_remove_char :: proc(tb: ^TextBuffer) {
 		curr_row.str = strings.join([]string{curr_row.str[:tb.col - 1], curr_row.str[tb.col:]}, "")
 		tb.col -= 1
 	} else if tb.row > 0 {
-		// TODO: merge lines when chars are removed from the beginning of a row
-		tb.row -= 1
-		curr_row = textbuffer_row_at(tb^, int(tb.row))
-		tb.col = c.int(len(curr_row.str))
+		curr_row := textbuffer_row_at(tb^, int(tb.row))
+		prev_row := textbuffer_row_at(tb^, int(tb.row - 1))
+		// place cursor at the end of line before merge occurred
+		// merge lines
+		new_col := c.int(len(prev_row.str))
+		prev_row.str = strings.join([]string{prev_row.str, curr_row.str}, "")
+		textbuffer_remove_row(tb)
+		tb.col = new_col
 	}
 }
 
-// TODO: insert a new row after the current row
-textbuffer_insert_row :: proc(tb: ^TextBuffer) {}
+// inserts a new row and sets cursor to the start of that row
+// TODO: fix inserting on end of file (aka tail) making program crash
+textbuffer_insert_row :: proc(tb: ^TextBuffer) {
+	new_row := new(TextBuffer_Row)
+	new_row^ = TextBuffer_Row {
+		str = "",
+	}
 
-// TODO: remove current row from textbuffer
-textbuffer_remove_row :: proc(tb: ^TextBuffer) {}
+	curr_row := textbuffer_row_at(tb^, int(tb.row))
+	new_row.node.prev = &curr_row.node
+	new_row.node.next = curr_row.node.next
+	curr_row.node.next = &new_row.node
+
+	tb.rowlen += 1
+	tb.row += 1
+	tb.col = 0
+}
+
+textbuffer_breakline :: proc(tb: ^TextBuffer) {
+	if tb.row < tb.rowlen {
+		curr_row := textbuffer_row_at(tb^, int(tb.row))
+		first_chunk := curr_row.str[:tb.col]
+		second_chunk := curr_row.str[tb.col:]
+		curr_row.str = first_chunk
+
+		textbuffer_insert_row(tb)
+		new_row := textbuffer_row_at(tb^, int(tb.row))
+		new_row.str = strings.clone(second_chunk)
+	} else {
+		textbuffer_insert_row(tb)
+	}
+}
+
+// removes row and sets cursor to the start of old previous row
+textbuffer_remove_row :: proc(tb: ^TextBuffer) {
+	curr_row := textbuffer_row_at(tb^, int(tb.row))
+	list.remove(&tb.rows, &curr_row.node)
+	tb.rowlen -= 1
+	tb.row -= 1
+	tb.col = 0
+}
 
 textbuffer_get_cursor_coordinates :: #force_inline proc(tb: TextBuffer) -> (y, x: c.int) {
 	return tb.row - tb.view_start, tb.col
