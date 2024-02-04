@@ -20,7 +20,7 @@ main :: proc() {
 		fmt.eprintln("Failed to load buffer from", os.args[1])
 		return
 	}
-	defer textbuffer_free(tb)
+	defer textbuffer_free(&tb)
 
 	panel := panel_new(&tb)
 	defer panel_delete(panel)
@@ -55,7 +55,7 @@ main :: proc() {
 			textbuffer_remove_char(&tb)
 
 		case nc.KEY_ENTER:
-		// textbuffer_insert_row(&tb)
+			textbuffer_insert_row(&tb)
 
 		case nc.KEY_RESIZE:
 			textbuffer_fit_newsize(&tb)
@@ -66,3 +66,4 @@ main :: proc() {
 		}
 	}
 }
+
