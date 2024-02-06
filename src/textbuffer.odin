@@ -22,6 +22,7 @@ TextBuffer :: struct {
 	filepath:             string,
 	win:                  ^nc.Window,
 	rows:                 list.List,
+	curr_row:             ^list.Node,
 	rowlen:               c.int,
 	view_start, view_end: c.int,
 	col, row:             c.int,
@@ -64,6 +65,7 @@ textbuffer_new :: proc(filepath: string) -> (tb: TextBuffer, success: bool) {
 			rows = rows,
 			rowlen = rowlen,
 			win = bufwin,
+			curr_row = rows.head,
 			view_end = h,
 		},
 		true
@@ -90,7 +92,6 @@ textbuffer_fit_newsize :: proc(tb: ^TextBuffer) {
 	textbuffer_view_update(tb, cur_y)
 }
 
-// todo: use this function to add saving functionality
 textbuffer_save_to_file :: proc(tb: TextBuffer) -> bool {
 	file, err := os.open(tb.filepath, os.O_CREATE | os.O_WRONLY, 0o644)
 	if err != os.ERROR_NONE do return false
@@ -113,7 +114,12 @@ textbuffer_save_to_file :: proc(tb: TextBuffer) -> bool {
 textbuffer_row_at :: proc(tb: TextBuffer, idx: int) -> ^TextBuffer_Row {
 	curr_row: ^TextBuffer_Row
 	count: int
-	if int(tb.rowlen / 2) < idx {
+	switch {
+	case idx == int(tb.row):
+		curr_iter := list.iterator_from_node(tb.curr_row, TextBuffer_Row, "node")
+		curr_row, _ = list.iterate_next(&curr_iter)
+
+	case int(tb.rowlen / 2) < idx:
 		tail := list.iterator_tail(tb.rows, TextBuffer_Row, "node")
 		count = int(tb.rowlen)
 		for row in list.iterate_prev(&tail) {
@@ -123,7 +129,8 @@ textbuffer_row_at :: proc(tb: TextBuffer, idx: int) -> ^TextBuffer_Row {
 			}
 			count -= 1
 		}
-	} else {
+
+	case:
 		head := list.iterator_head(tb.rows, TextBuffer_Row, "node")
 		for row in list.iterate_next(&head) {
 			if count == idx {
@@ -331,11 +338,17 @@ textbuffer_cursor_move :: proc(tb: ^TextBuffer, dir: Direction) {
 
 	switch dir {
 	case .Up:
-		if tb.row > 0 do tb.row -= 1
+		if tb.row > 0 {
+			tb.row -= 1
+			tb.curr_row = tb.curr_row.prev
+		}
 		scroll_up_if_on_edge(tb, cur_y)
 
 	case .Down:
-		if tb.row < tb.rowlen - 1 do tb.row += 1
+		if tb.row < tb.rowlen - 1 {
+			tb.row += 1
+			tb.curr_row = tb.curr_row.next
+		}
 		scroll_down_if_on_edge(tb, cur_y, h)
 
 	case .Left:
@@ -345,6 +358,7 @@ textbuffer_cursor_move :: proc(tb: ^TextBuffer, dir: Direction) {
 		} else if int(tb.row) > 0 {
 			tb.row -= 1
 			tb.col = c.int(len(textbuffer_row_at(tb^, int(tb.row)).str))
+			tb.curr_row = tb.curr_row.prev
 			scroll_up_if_on_edge(tb, cur_y)
 		}
 
@@ -355,6 +369,7 @@ textbuffer_cursor_move :: proc(tb: ^TextBuffer, dir: Direction) {
 		} else if tb.row < tb.rowlen - 1 {
 			tb.row += 1
 			tb.col = 0
+			tb.curr_row = tb.curr_row.next
 			scroll_down_if_on_edge(tb, cur_y, h)
 		}
 	}
