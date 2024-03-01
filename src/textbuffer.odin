@@ -83,6 +83,27 @@ textbuffer_free :: proc(tb: ^TextBuffer) -> bool {
 	return true
 }
 
+// updates the text_view and makes sure that the cursor is still visible on the window
+@(private = "file")
+textbuffer_view_update :: proc(tb: ^TextBuffer, cur_y: c.int) {
+	win_h, _ := nc.getmaxyx(tb.win)
+
+	// -- make sure the cursor is still inside the view
+	if cur_y >= win_h {
+		tb.view_start = tb.row - win_h + SPACE_FROM_EDGES
+	} else if cur_y < 0 {
+		tb.view_start = tb.row - win_h - SPACE_FROM_EDGES
+	} else if tb.view_start < win_h {
+		tb.view_start = tb.row - win_h + SPACE_FROM_EDGES
+	}
+	if tb.view_start < 0 do tb.view_start = 0
+
+
+	tb.view_end = tb.view_start + win_h
+	if tb.view_end >= tb.rowlen do tb.view_end = tb.rowlen - 1
+}
+
+
 textbuffer_fit_newsize :: proc(tb: ^TextBuffer) {
 	win_h, win_w := nc.getmaxyx(nc.stdscr)
 	win_h -= 1
@@ -144,6 +165,63 @@ textbuffer_row_at :: proc(tb: TextBuffer, idx: int) -> ^TextBuffer_Row {
 	return curr_row
 }
 
+// handles how cursor ought to move within the textbuffer and to prevent segfaults
+textbuffer_cursor_move :: proc(tb: ^TextBuffer, dir: Direction) {
+	h, w := nc.getmaxyx(tb.win)
+	cur_y, _ := textbuffer_get_cursor_coordinates(tb^)
+
+	scroll_up_if_on_edge :: #force_inline proc(tb: ^TextBuffer, cur_y: c.int) {
+		if cur_y == SPACE_FROM_EDGES do textbuffer_view_move(tb, .Up)
+	}
+
+	scroll_down_if_on_edge :: #force_inline proc(tb: ^TextBuffer, cur_y: c.int, maxx: c.int) {
+		if cur_y == maxx - 1 - SPACE_FROM_EDGES do textbuffer_view_move(tb, .Down)
+	}
+
+	switch dir {
+	case .Up:
+		if tb.row > 0 {
+			tb.row -= 1
+			tb.curr_row = tb.curr_row.prev
+		}
+		scroll_up_if_on_edge(tb, cur_y)
+
+	case .Down:
+		if tb.row < tb.rowlen - 1 {
+			tb.row += 1
+			tb.curr_row = tb.curr_row.next
+		}
+		scroll_down_if_on_edge(tb, cur_y, h)
+
+	case .Left:
+		if tb.col > 0 {
+			tb.col -= 1
+			// wrap around to previous line
+		} else if tb.row > 0 {
+			tb.row -= 1
+			tb.curr_row = tb.curr_row.prev
+			tb.col = c.int(len(textbuffer_row_at(tb^, int(tb.row)).str))
+			scroll_up_if_on_edge(tb, cur_y)
+		}
+
+	case .Right:
+		if int(tb.col) < len(textbuffer_row_at(tb^, int(tb.row)).str) {
+			tb.col += 1
+			// wrap around to next line
+		} else if tb.row < tb.rowlen - 1 {
+			tb.row += 1
+			tb.col = 0
+			tb.curr_row = tb.curr_row.next
+			scroll_down_if_on_edge(tb, cur_y, h)
+		}
+	}
+
+	// -- prevent cursor from overflowing row
+	collen := c.int(len(textbuffer_row_at(tb^, int(tb.row)).str))
+	if tb.col > collen {
+		tb.col = collen if collen >= 0 else 0
+	}
+}
 // inserts a new char into the current row and column in the textbuffer
 textbuffer_append_char :: proc(tb: ^TextBuffer, char: rune) {
 	curr_row := textbuffer_row_at(tb^, int(tb.row))
@@ -169,7 +247,7 @@ textbuffer_append_char :: proc(tb: ^TextBuffer, char: rune) {
 	}
 
 	// go to next col after insertion is done
-	tb.col += 1
+	textbuffer_cursor_move(tb, .Right)
 }
 
 // removes char in the current row and column
@@ -177,7 +255,7 @@ textbuffer_remove_char :: proc(tb: ^TextBuffer) {
 	curr_row := textbuffer_row_at(tb^, int(tb.row))
 	if tb.col > 0 {
 		curr_row.str = strings.join([]string{curr_row.str[:tb.col - 1], curr_row.str[tb.col:]}, "")
-		tb.col -= 1
+		textbuffer_cursor_move(tb, .Left)
 	} else if tb.row > 0 {
 		curr_row := textbuffer_row_at(tb^, int(tb.row))
 		prev_row := textbuffer_row_at(tb^, int(tb.row - 1))
@@ -204,8 +282,9 @@ textbuffer_insert_row :: proc(tb: ^TextBuffer) {
 	curr_row.node.next = &new_row.node
 
 	tb.rowlen += 1
-	tb.row += 1
+	textbuffer_cursor_move(tb, .Down)
 	tb.col = 0
+	tb.curr_row = &new_row.node
 }
 
 textbuffer_breakline :: proc(tb: ^TextBuffer) {
@@ -225,10 +304,11 @@ textbuffer_breakline :: proc(tb: ^TextBuffer) {
 
 // removes row and sets cursor to the start of old previous row
 textbuffer_remove_row :: proc(tb: ^TextBuffer) {
-	curr_row := textbuffer_row_at(tb^, int(tb.row))
-	list.remove(&tb.rows, &curr_row.node)
+	curr_row := tb.curr_row
+	tb.curr_row = curr_row.prev
+	list.remove(&tb.rows, curr_row)
 	tb.rowlen -= 1
-	tb.row -= 1
+	textbuffer_cursor_move(tb, .Up)
 	tb.col = 0
 }
 
@@ -301,82 +381,4 @@ textbuffer_view_move :: proc(tb: ^TextBuffer, dir: Direction) {
 
 	tb.view_end = tb.view_start + h
 	if tb.view_end > tb.rowlen do tb.view_end = tb.rowlen
-}
-
-// updates the text_view and makes sure that the cursor is still visible on the window
-@(private = "file")
-textbuffer_view_update :: proc(tb: ^TextBuffer, cur_y: c.int) {
-	win_h, _ := nc.getmaxyx(tb.win)
-
-	// -- make sure the cursor is still inside the view
-	if cur_y >= win_h {
-		tb.view_start = tb.row - win_h + SPACE_FROM_EDGES
-	} else if cur_y < 0 {
-		tb.view_start = tb.row - win_h - SPACE_FROM_EDGES
-	} else if tb.view_start < win_h {
-		tb.view_start = tb.row - win_h + SPACE_FROM_EDGES
-	}
-	if tb.view_start < 0 do tb.view_start = 0
-
-
-	tb.view_end = tb.view_start + win_h
-	if tb.view_end >= tb.rowlen do tb.view_end = tb.rowlen - 1
-}
-
-// handles how cursor ought to move within the textbuffer and to prevent segfaults
-textbuffer_cursor_move :: proc(tb: ^TextBuffer, dir: Direction) {
-	h, w := nc.getmaxyx(tb.win)
-	cur_y, _ := textbuffer_get_cursor_coordinates(tb^)
-
-	scroll_up_if_on_edge :: #force_inline proc(tb: ^TextBuffer, cur_y: c.int) {
-		if cur_y == SPACE_FROM_EDGES do textbuffer_view_move(tb, .Up)
-	}
-
-	scroll_down_if_on_edge :: #force_inline proc(tb: ^TextBuffer, cur_y: c.int, maxx: c.int) {
-		if cur_y == maxx - 1 - SPACE_FROM_EDGES do textbuffer_view_move(tb, .Down)
-	}
-
-	switch dir {
-	case .Up:
-		if tb.row > 0 {
-			tb.row -= 1
-			tb.curr_row = tb.curr_row.prev
-		}
-		scroll_up_if_on_edge(tb, cur_y)
-
-	case .Down:
-		if tb.row < tb.rowlen - 1 {
-			tb.row += 1
-			tb.curr_row = tb.curr_row.next
-		}
-		scroll_down_if_on_edge(tb, cur_y, h)
-
-	case .Left:
-		if tb.col > 0 {
-			tb.col -= 1
-			// wrap around to previous line
-		} else if int(tb.row) > 0 {
-			tb.row -= 1
-			tb.col = c.int(len(textbuffer_row_at(tb^, int(tb.row)).str))
-			tb.curr_row = tb.curr_row.prev
-			scroll_up_if_on_edge(tb, cur_y)
-		}
-
-	case .Right:
-		if int(tb.col) < len(textbuffer_row_at(tb^, int(tb.row)).str) {
-			tb.col += 1
-			// wrap around to next line
-		} else if tb.row < tb.rowlen - 1 {
-			tb.row += 1
-			tb.col = 0
-			tb.curr_row = tb.curr_row.next
-			scroll_down_if_on_edge(tb, cur_y, h)
-		}
-	}
-
-	// -- prevent cursor from overflowing row
-	collen := c.int(len(textbuffer_row_at(tb^, int(tb.row)).str))
-	if tb.col > collen {
-		tb.col = collen if collen >= 0 else 0
-	}
 }
