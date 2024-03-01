@@ -38,7 +38,7 @@ panel_draw :: proc(panel: Panel) {
 
 	nc.mvwprintw(panel.win, 0, 5, "%s", panel.txbuffer.filepath)
 	line_info_bytes: [20]u8
-	line_info := fmt.bprintf(line_info_bytes[:], "%d:%d", panel.txbuffer.row, panel.txbuffer.col)
+	line_info := fmt.bprintf(line_info_bytes[:], "%d:%d", panel.txbuffer.row + 1, panel.txbuffer.col + 1)
 	nc.mvwprintw(panel.win, 0, c.int(w) - 5 - c.int(len(line_info)), "%s", line_info)
 	nc.wrefresh(panel.win)
 }

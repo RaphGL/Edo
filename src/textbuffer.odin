@@ -4,6 +4,8 @@ package main
 
 import "core:c"
 import "core:container/intrusive/list"
+import "core:fmt"
+import "core:mem"
 import "core:os"
 import "core:slice"
 import "core:strings"
@@ -12,6 +14,7 @@ import nc "ncurses/src"
 
 // padding between bottom and top edges for cursor scrolling
 SPACE_FROM_EDGES :: 5
+LINE_WIDTH :: 7
 
 TextBuffer_Row :: struct {
 	node: list.Node,
@@ -21,6 +24,7 @@ TextBuffer_Row :: struct {
 TextBuffer :: struct {
 	filepath:             string,
 	win:                  ^nc.Window,
+	linewin:              ^nc.Window,
 	rows:                 list.List,
 	curr_row:             ^list.Node,
 	rowlen:               c.int,
@@ -38,7 +42,6 @@ textbuffer_new :: proc(filepath: string) -> (tb: TextBuffer, success: bool) {
 
 	// -- initialize struct fields
 	h, w := nc.getmaxyx(nc.stdscr)
-	bufwin := nc.newwin(h - 1, w, 0, 0)
 	rows: list.List
 	rowlen: c.int
 	if len(file_contents) != 0 {
@@ -64,7 +67,8 @@ textbuffer_new :: proc(filepath: string) -> (tb: TextBuffer, success: bool) {
 			filepath = filepath,
 			rows = rows,
 			rowlen = rowlen,
-			win = bufwin,
+			win = nc.newwin(h - 1, w - LINE_WIDTH, 0, LINE_WIDTH),
+			linewin = nc.newwin(h - 1, LINE_WIDTH, 0, 0),
 			curr_row = rows.head,
 			view_end = h,
 		},
@@ -74,6 +78,7 @@ textbuffer_new :: proc(filepath: string) -> (tb: TextBuffer, success: bool) {
 textbuffer_free :: proc(tb: ^TextBuffer) -> bool {
 	nc.werase(tb.win)
 	nc.delwin(tb.win)
+	nc.delwin(tb.linewin)
 	for !list.is_empty(&tb.rows) {
 		// row := 
 		list.pop_front(&tb.rows)
@@ -84,7 +89,7 @@ textbuffer_free :: proc(tb: ^TextBuffer) -> bool {
 }
 
 // updates the text_view and makes sure that the cursor is still visible on the window
-@(private = "file")
+@(private)
 textbuffer_view_update :: proc(tb: ^TextBuffer, cur_y: c.int) {
 	win_h, _ := nc.getmaxyx(tb.win)
 
@@ -107,7 +112,8 @@ textbuffer_view_update :: proc(tb: ^TextBuffer, cur_y: c.int) {
 textbuffer_fit_newsize :: proc(tb: ^TextBuffer) {
 	win_h, win_w := nc.getmaxyx(nc.stdscr)
 	win_h -= 1
-	nc.wresize(tb.win, win_h, win_w)
+	nc.wresize(tb.win, win_h, win_w - LINE_WIDTH)
+	nc.wresize(tb.linewin, win_h, LINE_WIDTH)
 
 	cur_y, _ := textbuffer_get_cursor_coordinates(tb^)
 	textbuffer_view_update(tb, cur_y)
@@ -323,6 +329,25 @@ Direction :: enum {
 	Right,
 }
 
+@(private)
+textbuffer_draw_linenum :: proc(tb: TextBuffer) {
+	nc.werase(tb.linewin)
+	defer nc.wrefresh(tb.linewin)
+
+	line_num_bytes: [20]u8
+	for n in tb.view_start ..< tb.view_end {
+		mem.zero_slice(line_num_bytes[:])
+		line_num := fmt.bprintf(line_num_bytes[:], "%d", n + 1)
+		nc.mvwprintw(
+			tb.linewin,
+			n - tb.view_start,
+			c.int(LINE_WIDTH - len(line_num)) - 2,
+			"%s\n",
+			line_num,
+		)
+	}
+}
+
 // TODO: handle tabs
 // TODO: scroll X axis when tb.col > win_width
 textbuffer_draw :: proc(tb: TextBuffer) {
@@ -363,11 +388,12 @@ textbuffer_draw :: proc(tb: TextBuffer) {
 	cur_y, _ := textbuffer_get_cursor_coordinates(tb)
 	nc.mvwaddch(tb.win, cur_y, tb.col, ch)
 	nc.wattroff(tb.win, nc.A_REVERSE)
+	textbuffer_draw_linenum(tb)
 }
 
 // creates a view slice with the contents that ought to be displayed for the current cursor position.
 // only takes .Up and .Down as directions. Other directions will be ignored
-@(private = "file")
+@(private)
 textbuffer_view_move :: proc(tb: ^TextBuffer, dir: Direction) {
 	h, w := nc.getmaxyx(tb.win)
 	#partial switch dir {
