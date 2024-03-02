@@ -178,11 +178,11 @@ textbuffer_cursor_move :: proc(tb: ^TextBuffer, dir: Direction) {
 	cur_y, _ := textbuffer_get_cursor_coordinates(tb^)
 
 	scroll_up_if_on_edge :: #force_inline proc(tb: ^TextBuffer, cur_y: c.int) {
-		if cur_y == SPACE_FROM_EDGES do textbuffer_view_move(tb, .Up)
+		if cur_y <= SPACE_FROM_EDGES do textbuffer_view_move(tb, .Up)
 	}
 
 	scroll_down_if_on_edge :: #force_inline proc(tb: ^TextBuffer, cur_y: c.int, maxx: c.int) {
-		if cur_y == maxx - 1 - SPACE_FROM_EDGES do textbuffer_view_move(tb, .Down)
+		if cur_y >= maxx - 1 - SPACE_FROM_EDGES do textbuffer_view_move(tb, .Down)
 	}
 
 	switch dir {
@@ -229,6 +229,7 @@ textbuffer_cursor_move :: proc(tb: ^TextBuffer, dir: Direction) {
 		tb.col = collen if collen >= 0 else 0
 	}
 }
+
 // inserts a new char into the current row and column in the textbuffer
 textbuffer_append_char :: proc(tb: ^TextBuffer, char: rune) {
 	curr_row := textbuffer_row_at(tb^, int(tb.row))
@@ -283,10 +284,15 @@ textbuffer_insert_row :: proc(tb: ^TextBuffer) {
 		str = "",
 	}
 
-	tb.curr_row.next.prev = &new_row.node
-	new_row.node.prev = tb.curr_row
-	new_row.node.next = tb.curr_row.next
-	tb.curr_row.next = &new_row.node
+	if tb.curr_row.next == nil {
+		tb.curr_row.next = &new_row.node
+		new_row.node.prev = tb.curr_row
+	} else {
+		tb.curr_row.next.prev = &new_row.node
+		new_row.node.prev = tb.curr_row
+		new_row.node.next = tb.curr_row.next
+		tb.curr_row.next = &new_row.node
+	}
 
 	tb.rowlen += 1
 	textbuffer_cursor_move(tb, .Down)
@@ -314,9 +320,6 @@ textbuffer_remove_row :: proc(tb: ^TextBuffer) {
 	new_curr_row := tb.curr_row.prev
 	list.remove(&tb.rows, tb.curr_row)
 	tb.row -= 1
-	// update view buffer to make sure cursor is visible
-	cur_y, _ := textbuffer_get_cursor_coordinates(tb^)
-	textbuffer_view_update(tb, cur_y)
 	// make previous row the current row
 	tb.curr_row = new_curr_row
 	tb.rowlen -= 1
@@ -341,7 +344,8 @@ textbuffer_draw_linenum :: proc(tb: TextBuffer) {
 	defer nc.wrefresh(tb.linewin)
 
 	line_num_bytes: [20]u8
-	for n in tb.view_start ..< tb.view_end {
+	linenum_end := tb.view_end if tb.view_end < tb.rowlen else tb.rowlen
+	for n in tb.view_start ..< linenum_end {
 		mem.zero_slice(line_num_bytes[:])
 		line_num := fmt.bprintf(line_num_bytes[:], "%d", n + 1)
 		nc.mvwprintw(
