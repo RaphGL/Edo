@@ -89,6 +89,7 @@ textbuffer_free :: proc(tb: ^TextBuffer) -> bool {
 }
 
 // updates the text_view and makes sure that the cursor is still visible on the window
+// cur_y: cursor coordinates relative to view buffer
 @(private)
 textbuffer_view_update :: proc(tb: ^TextBuffer, cur_y: c.int) {
 	win_h, _ := nc.getmaxyx(tb.win)
@@ -282,15 +283,14 @@ textbuffer_insert_row :: proc(tb: ^TextBuffer) {
 		str = "",
 	}
 
-	curr_row := textbuffer_row_at(tb^, int(tb.row))
-	new_row.node.prev = &curr_row.node
-	new_row.node.next = curr_row.node.next
-	curr_row.node.next = &new_row.node
+	tb.curr_row.next.prev = &new_row.node
+	new_row.node.prev = tb.curr_row
+	new_row.node.next = tb.curr_row.next
+	tb.curr_row.next = &new_row.node
 
 	tb.rowlen += 1
 	textbuffer_cursor_move(tb, .Down)
 	tb.col = 0
-	tb.curr_row = &new_row.node
 }
 
 textbuffer_breakline :: proc(tb: ^TextBuffer) {
@@ -310,14 +310,20 @@ textbuffer_breakline :: proc(tb: ^TextBuffer) {
 
 // removes row and sets cursor to the start of old previous row
 textbuffer_remove_row :: proc(tb: ^TextBuffer) {
-	curr_row := tb.curr_row
-	tb.curr_row = curr_row.prev
-	list.remove(&tb.rows, curr_row)
+	// remove row
+	new_curr_row := tb.curr_row.prev
+	list.remove(&tb.rows, tb.curr_row)
+	tb.row -= 1
+	// update view buffer to make sure cursor is visible
+	cur_y, _ := textbuffer_get_cursor_coordinates(tb^)
+	textbuffer_view_update(tb, cur_y)
+	// make previous row the current row
+	tb.curr_row = new_curr_row
 	tb.rowlen -= 1
-	textbuffer_cursor_move(tb, .Up)
 	tb.col = 0
 }
 
+// returns the cursor coordinates relative to the start of the view buffer
 textbuffer_get_cursor_coordinates :: #force_inline proc(tb: TextBuffer) -> (y, x: c.int) {
 	return tb.row - tb.view_start, tb.col
 }
