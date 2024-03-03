@@ -36,7 +36,8 @@ panel_draw :: proc(panel: Panel) {
 		nc.waddch(panel.win, ' ')
 	}
 
-	nc.mvwprintw(panel.win, 0, 5, "%s", panel.txbuffer.filepath)
+	filename := panel.txbuffer.filepath if panel.txbuffer.filepath != "" else "DRAFT"
+	nc.mvwprintw(panel.win, 0, 5, "%s", filename)
 	line_info_bytes: [20]u8
 	line_info := fmt.bprintf(line_info_bytes[:], "%d:%d", panel.txbuffer.row + 1, panel.txbuffer.col + 1)
 	nc.mvwprintw(panel.win, 0, c.int(w) - 5 - c.int(len(line_info)), "%s", line_info)

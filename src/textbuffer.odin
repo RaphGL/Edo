@@ -1,5 +1,4 @@
 // TODO: cursor is fucked, FIX PLZ
-// TODO: make use of a curr_row field in textbuffer to avoid expensive link traversal
 package main
 
 import "core:c"
@@ -14,6 +13,7 @@ import nc "ncurses/src"
 
 // padding between bottom and top edges for cursor scrolling
 SPACE_FROM_EDGES :: 5
+// width for the line numbering column
 LINE_WIDTH :: 7
 
 TextBuffer_Row :: struct {
@@ -35,7 +35,8 @@ TextBuffer :: struct {
 textbuffer_new :: proc(filepath: string) -> (tb: TextBuffer, success: bool) {
 	// -- convert text file into rows
 	file_contents: []string
-	if filepath != "" {
+	filepath := filepath
+	if filepath != "" && os.exists(filepath) {
 		data := os.read_entire_file(filepath) or_return
 		file_contents = strings.split(string(data), "\n")
 	}
@@ -121,6 +122,7 @@ textbuffer_fit_newsize :: proc(tb: ^TextBuffer) {
 }
 
 textbuffer_save_to_file :: proc(tb: TextBuffer) -> bool {
+	if tb.filepath == "" do return false
 	file, err := os.open(tb.filepath, os.O_CREATE | os.O_WRONLY, 0o644)
 	if err != os.ERROR_NONE do return false
 	defer os.close(file)
@@ -354,7 +356,7 @@ textbuffer_draw_linenum :: proc(tb: TextBuffer) {
 			_, maxx := nc.getmaxyx(tb.linewin)
 			nc.wattron(tb.linewin, active_line)
 
-		cur_y, _ := textbuffer_get_cursor_coordinates(tb)
+			cur_y, _ := textbuffer_get_cursor_coordinates(tb)
 			for i in 0 ..< maxx do nc.mvwaddch(tb.linewin, cur_y, i, ' ')
 		} else {
 			nc.wattron(tb.linewin, inactive_line)
