@@ -12,8 +12,6 @@ Panel :: struct {
 panel_new :: proc(target_buffer: ^TextBuffer) -> Panel {
 	h, w := nc.getmaxyx(nc.stdscr)
 	win := nc.newwin(1, w, h - 1, 0)
-	nc.wattron(win, nc.A_REVERSE | nc.A_BOLD)
-
 	return Panel{win = win, txbuffer = target_buffer}
 }
 
@@ -30,6 +28,8 @@ panel_fit_newsize :: proc(panel: Panel) {
 panel_draw :: proc(panel: Panel) {
 	nc.werase(panel.win)
 	defer nc.wrefresh(panel.win)
+	nc.wattron(panel.win ,nc.COLOR_PAIR(Pair_Bar))
+	defer nc.wattroff(panel.win, nc.COLOR_PAIR(Pair_Bar))
 
 	_, w := nc.getmaxyx(panel.win)
 	for i in 0 ..< w {

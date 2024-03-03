@@ -345,14 +345,31 @@ textbuffer_draw_linenum :: proc(tb: TextBuffer) {
 
 	line_num_bytes: [20]u8
 	linenum_end := tb.view_end if tb.view_end < tb.rowlen else tb.rowlen
+
+	active_line := nc.COLOR_PAIR(Pair_Active_Linenum)
+	inactive_line := nc.COLOR_PAIR(Pair_Linenum)
+
 	for n in tb.view_start ..< linenum_end {
+		if n == tb.row {
+			_, maxx := nc.getmaxyx(tb.linewin)
+			nc.wattron(tb.linewin, active_line)
+
+		cur_y, _ := textbuffer_get_cursor_coordinates(tb)
+			for i in 0 ..< maxx do nc.mvwaddch(tb.linewin, cur_y, i, ' ')
+		} else {
+			nc.wattron(tb.linewin, inactive_line)
+		}
+
+		defer nc.wattroff(tb.linewin, active_line if n == tb.row else inactive_line)
+
+
 		mem.zero_slice(line_num_bytes[:])
-		line_num := fmt.bprintf(line_num_bytes[:], "%d", n + 1)
+		line_num := fmt.bprintf(line_num_bytes[:], "%d  ", n + 1)
 		nc.mvwprintw(
 			tb.linewin,
 			n - tb.view_start,
-			c.int(LINE_WIDTH - len(line_num)) - 2,
-			"%s\n",
+			c.int(LINE_WIDTH - len(line_num)),
+			"%s",
 			line_num,
 		)
 	}
@@ -364,14 +381,33 @@ textbuffer_draw :: proc(tb: TextBuffer) {
 	nc.werase(tb.win)
 	defer nc.wrefresh(tb.win)
 
+	// color for regular lines
+	fg_color := nc.COLOR_PAIR(Pair_Foreground)
+	// color for the current line
+	curr_color := nc.COLOR_PAIR(Pair_Active_Linenum)
+
+	// -- draw current line's highlight
+	cur_y, _ := textbuffer_get_cursor_coordinates(tb)
+	_, maxx := nc.getmaxyx(tb.win)
+	nc.wattron(tb.win, curr_color)
+	for i in 0 ..< maxx {
+		nc.mvwaddch(tb.win, cur_y, i, ' ')
+	}
+	nc.wattroff(tb.win, curr_color)
+
 	// -- draw buffer content
 	row_start := textbuffer_row_at(tb, int(tb.view_start))
 	iter := list.iterator_from_node(&row_start.node, TextBuffer_Row, "node")
 	curr_row: c.int
+
 	for row in list.iterate_next(&iter) {
 		if tb.view_start + curr_row >= tb.view_end do break
 
+		nc.wattron(tb.win, curr_color if &row.node == tb.curr_row else fg_color)
+		defer nc.wattroff(tb.win, curr_color if &row.node == tb.curr_row else fg_color)
+
 		nc.wmove(tb.win, curr_row, 0)
+
 		for char in row.str {
 			if char == '\t' {
 				nc.waddch(tb.win, ' ')
@@ -395,7 +431,6 @@ textbuffer_draw :: proc(tb: TextBuffer) {
 		ch = c.uint(row[tb.col])
 	}
 
-	cur_y, _ := textbuffer_get_cursor_coordinates(tb)
 	nc.mvwaddch(tb.win, cur_y, tb.col, ch)
 	nc.wattroff(tb.win, nc.A_REVERSE)
 	textbuffer_draw_linenum(tb)
