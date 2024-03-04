@@ -141,17 +141,17 @@ textbuffer_save_to_file :: proc(tb: TextBuffer) -> bool {
 	return err == os.ERROR_NONE
 }
 
-textbuffer_row_at :: proc(tb: TextBuffer, idx: int) -> ^TextBuffer_Row {
+textbuffer_row_at :: proc(tb: TextBuffer, idx: c.int) -> ^TextBuffer_Row {
 	curr_row: ^TextBuffer_Row
-	count: int
+	count: c.int
 	switch {
-	case idx == int(tb.row):
+	case idx == tb.row:
 		curr_iter := list.iterator_from_node(tb.curr_row, TextBuffer_Row, "node")
 		curr_row, _ = list.iterate_next(&curr_iter)
 
-	case int(tb.rowlen / 2) < idx:
+	case tb.rowlen / 2 < idx:
 		tail := list.iterator_tail(tb.rows, TextBuffer_Row, "node")
-		count = int(tb.rowlen)
+		count = tb.rowlen
 		for row in list.iterate_prev(&tail) {
 			if count == idx {
 				curr_row = row
@@ -209,12 +209,12 @@ textbuffer_cursor_move :: proc(tb: ^TextBuffer, dir: Direction) {
 		} else if tb.row > 0 {
 			tb.row -= 1
 			tb.curr_row = tb.curr_row.prev
-			tb.col = c.int(len(textbuffer_row_at(tb^, int(tb.row)).str))
+			tb.col = c.int(len(textbuffer_row_at(tb^, tb.row).str))
 			scroll_up_if_on_edge(tb, cur_y)
 		}
 
 	case .Right:
-		if int(tb.col) < len(textbuffer_row_at(tb^, int(tb.row)).str) {
+		if int(tb.col) < len(textbuffer_row_at(tb^, tb.row).str) {
 			tb.col += 1
 			// wrap around to next line
 		} else if tb.row < tb.rowlen - 1 {
@@ -226,7 +226,7 @@ textbuffer_cursor_move :: proc(tb: ^TextBuffer, dir: Direction) {
 	}
 
 	// -- prevent cursor from overflowing row
-	collen := c.int(len(textbuffer_row_at(tb^, int(tb.row)).str))
+	collen := c.int(len(textbuffer_row_at(tb^, tb.row).str))
 	if tb.col > collen {
 		tb.col = collen if collen >= 0 else 0
 	}
@@ -234,7 +234,7 @@ textbuffer_cursor_move :: proc(tb: ^TextBuffer, dir: Direction) {
 
 // inserts a new char into the current row and column in the textbuffer
 textbuffer_append_char :: proc(tb: ^TextBuffer, char: rune) {
-	curr_row := textbuffer_row_at(tb^, int(tb.row))
+	curr_row := textbuffer_row_at(tb^, tb.row)
 
 	char_str := utf8.runes_to_string([]rune{char})
 	defer delete(char_str)
@@ -262,13 +262,13 @@ textbuffer_append_char :: proc(tb: ^TextBuffer, char: rune) {
 
 // removes char in the current row and column
 textbuffer_remove_char :: proc(tb: ^TextBuffer) {
-	curr_row := textbuffer_row_at(tb^, int(tb.row))
+	curr_row := textbuffer_row_at(tb^, tb.row)
 	if tb.col > 0 {
 		curr_row.str = strings.join([]string{curr_row.str[:tb.col - 1], curr_row.str[tb.col:]}, "")
 		textbuffer_cursor_move(tb, .Left)
 	} else if tb.row > 0 {
-		curr_row := textbuffer_row_at(tb^, int(tb.row))
-		prev_row := textbuffer_row_at(tb^, int(tb.row - 1))
+		curr_row := textbuffer_row_at(tb^, tb.row)
+		prev_row := textbuffer_row_at(tb^, tb.row - 1)
 		// place cursor at the end of line before merge occurred
 		// merge lines
 		new_col := c.int(len(prev_row.str))
@@ -303,13 +303,13 @@ textbuffer_insert_row :: proc(tb: ^TextBuffer) {
 
 textbuffer_breakline :: proc(tb: ^TextBuffer) {
 	if tb.row < tb.rowlen {
-		curr_row := textbuffer_row_at(tb^, int(tb.row))
+		curr_row := textbuffer_row_at(tb^, tb.row)
 		first_chunk := curr_row.str[:tb.col]
 		second_chunk := curr_row.str[tb.col:]
 		curr_row.str = first_chunk
 
 		textbuffer_insert_row(tb)
-		new_row := textbuffer_row_at(tb^, int(tb.row))
+		new_row := textbuffer_row_at(tb^, tb.row)
 		new_row.str = strings.clone(second_chunk)
 	} else {
 		textbuffer_insert_row(tb)
@@ -398,17 +398,18 @@ textbuffer_draw :: proc(tb: TextBuffer) {
 	nc.wattroff(tb.win, curr_color)
 
 	// -- draw buffer content
-	row_start := textbuffer_row_at(tb, int(tb.view_start))
+	row_start := textbuffer_row_at(tb, tb.view_start)
 	iter := list.iterator_from_node(&row_start.node, TextBuffer_Row, "node")
-	curr_row: c.int
-
+	row_idx: c.int
 	for row in list.iterate_next(&iter) {
-		if tb.view_start + curr_row >= tb.view_end do break
+		defer row_idx += 1
+		if tb.view_start + row_idx > tb.view_end do break
 
-		nc.wattron(tb.win, curr_color if &row.node == tb.curr_row else fg_color)
-		defer nc.wattroff(tb.win, curr_color if &row.node == tb.curr_row else fg_color)
+		line_color := curr_color if &row.node == tb.curr_row else fg_color
+		nc.wattron(tb.win, line_color)
+		defer nc.wattroff(tb.win, line_color)
 
-		nc.wmove(tb.win, curr_row, 0)
+		nc.wmove(tb.win, row_idx, 0)
 
 		for char in row.str {
 			if char == '\t' {
@@ -417,12 +418,11 @@ textbuffer_draw :: proc(tb: TextBuffer) {
 				nc.waddch(tb.win, c.uint(char))
 			}
 		}
-		curr_row += 1
 	}
 
 	// -- draw cursor
 	nc.wattron(tb.win, nc.A_REVERSE)
-	row := textbuffer_row_at(tb, int(tb.row)).str
+	row := textbuffer_row_at(tb, tb.row).str
 	ch: c.uint
 	switch {
 	case int(tb.col) > len(row) - 1:
