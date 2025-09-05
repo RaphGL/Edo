@@ -1,3 +1,9 @@
 [submodule "src/ncurses"]
 	path = src/ncurses
 	url = https://github.com/RaphGL/Ncurses.odin
+[submodule "src/TermCL"]
+	path = src/TermCL
+	url = https://github.com/RaphGL/TermCL.git
+[submodule "src/termcl"]
+	path = src/termcl
+	url = https://github.com/RaphGL/Termcl

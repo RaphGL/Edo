@@ -1,7 +1,6 @@
 // TODO: cursor is fucked, FIX PLZ
 package main
 
-import "core:c"
 import "core:container/intrusive/list"
 import "core:fmt"
 import "core:mem"
@@ -9,7 +8,7 @@ import "core:os"
 import "core:slice"
 import "core:strings"
 import "core:unicode/utf8"
-import nc "ncurses/src"
+import t "termcl"
 
 // padding between bottom and top edges for cursor scrolling
 SPACE_FROM_EDGES :: 5
@@ -23,13 +22,13 @@ TextBuffer_Row :: struct {
 
 TextBuffer :: struct {
 	filepath:             string,
-	win:                  ^nc.Window,
-	linewin:              ^nc.Window,
+	win:                  t.Window,
+	linewin:              t.Window,
 	rows:                 list.List,
 	curr_row:             ^list.Node,
-	rowlen:               c.int,
-	view_start, view_end: c.int,
-	col, row:             c.int,
+	rowlen:               uint,
+	view_start, view_end: uint,
+	col, row:             uint,
 }
 
 textbuffer_new :: proc(filepath: string) -> (tb: TextBuffer, success: bool) {
@@ -42,9 +41,9 @@ textbuffer_new :: proc(filepath: string) -> (tb: TextBuffer, success: bool) {
 	}
 
 	// -- initialize struct fields
-	h, w := nc.getmaxyx(nc.stdscr)
+	termsize := t.get_term_size()
 	rows: list.List
-	rowlen: c.int
+	rowlen: uint
 	if len(file_contents) != 0 {
 		for row in file_contents {
 			newrow := new(TextBuffer_Row)
@@ -68,18 +67,17 @@ textbuffer_new :: proc(filepath: string) -> (tb: TextBuffer, success: bool) {
 			filepath = filepath,
 			rows = rows,
 			rowlen = rowlen,
-			win = nc.newwin(h - 1, w - LINE_WIDTH, 0, LINE_WIDTH),
-			linewin = nc.newwin(h - 1, LINE_WIDTH, 0, 0),
+			win = t.init_window(0, LINE_WIDTH, termsize.h - 1, termsize.w - LINE_WIDTH),
+			linewin = t.init_window(0, 0, termsize.h - 1, LINE_WIDTH),
 			curr_row = rows.head,
-			view_end = h,
+			view_end = termsize.h,
 		},
 		true
 }
 
 textbuffer_free :: proc(tb: ^TextBuffer) -> bool {
-	nc.werase(tb.win)
-	nc.delwin(tb.win)
-	nc.delwin(tb.linewin)
+	t.destroy_window(&tb.win)
+	t.destroy_window(&tb.linewin)
 	for !list.is_empty(&tb.rows) {
 		// row := 
 		list.pop_front(&tb.rows)
@@ -92,32 +90,32 @@ textbuffer_free :: proc(tb: ^TextBuffer) -> bool {
 // updates the text_view and makes sure that the cursor is still visible on the window
 // cur_y: cursor coordinates relative to view buffer
 @(private)
-textbuffer_view_update :: proc(tb: ^TextBuffer, cur_y: c.int) {
-	win_h, _ := nc.getmaxyx(tb.win)
+textbuffer_view_update :: proc(tb: ^TextBuffer, cur_y: uint) {
+	winsize := t.get_window_size(&tb.win)
 
 	// -- make sure the cursor is still inside the view
-	if cur_y >= win_h {
-		tb.view_start = tb.row - win_h + SPACE_FROM_EDGES
+	if cur_y >= winsize.h {
+		tb.view_start = tb.row - winsize.h + SPACE_FROM_EDGES
 	} else if cur_y < 0 {
-		tb.view_start = tb.row - win_h - SPACE_FROM_EDGES
-	} else if tb.view_start < win_h {
-		tb.view_start = tb.row - win_h + SPACE_FROM_EDGES
+		tb.view_start = tb.row - winsize.h - SPACE_FROM_EDGES
+	} else if tb.view_start < winsize.h {
+		tb.view_start = tb.row - winsize.h + SPACE_FROM_EDGES
 	}
 	if tb.view_start < 0 do tb.view_start = 0
 
 
-	tb.view_end = tb.view_start + win_h
+	tb.view_end = tb.view_start + winsize.h
 	if tb.view_end >= tb.rowlen do tb.view_end = tb.rowlen - 1
 }
 
 
 textbuffer_fit_newsize :: proc(tb: ^TextBuffer) {
-	win_h, win_w := nc.getmaxyx(nc.stdscr)
-	win_h -= 1
-	nc.wresize(tb.win, win_h, win_w - LINE_WIDTH)
-	nc.wresize(tb.linewin, win_h, LINE_WIDTH)
+	termsize := t.get_term_size()
+	termsize.h -= 1
+	t.resize_window(&tb.win, termsize.h, termsize.w)
+	t.resize_window(&tb.linewin, termsize.h, LINE_WIDTH)
 
-	cur_y, _ := textbuffer_get_cursor_coordinates(tb^)
+	cur_y, _ := textbuffer_get_cursor_coordinates(tb)
 	textbuffer_view_update(tb, cur_y)
 }
 
@@ -141,9 +139,9 @@ textbuffer_save_to_file :: proc(tb: TextBuffer) -> bool {
 	return err == os.ERROR_NONE
 }
 
-textbuffer_row_at :: proc(tb: TextBuffer, idx: c.int) -> ^TextBuffer_Row {
+textbuffer_row_at :: proc(tb: ^TextBuffer, idx: uint) -> ^TextBuffer_Row {
 	curr_row: ^TextBuffer_Row
-	count: c.int
+	count: uint
 	switch {
 	case idx == tb.row:
 		curr_iter := list.iterator_from_node(tb.curr_row, TextBuffer_Row, "node")
@@ -176,15 +174,15 @@ textbuffer_row_at :: proc(tb: TextBuffer, idx: c.int) -> ^TextBuffer_Row {
 
 // handles how cursor ought to move within the textbuffer and to prevent segfaults
 textbuffer_cursor_move :: proc(tb: ^TextBuffer, dir: Direction) {
-	h, w := nc.getmaxyx(tb.win)
-	cur_y, _ := textbuffer_get_cursor_coordinates(tb^)
+	winsize := t.get_window_size(&tb.win)
+	cur_y, _ := textbuffer_get_cursor_coordinates(tb)
 
-	scroll_up_if_on_edge :: #force_inline proc(tb: ^TextBuffer, cur_y: c.int) {
+	scroll_up_if_on_edge :: #force_inline proc(tb: ^TextBuffer, cur_y: uint) {
 		if cur_y <= SPACE_FROM_EDGES do textbuffer_view_move(tb, .Up)
 	}
 
-	scroll_down_if_on_edge :: #force_inline proc(tb: ^TextBuffer, cur_y: c.int, maxx: c.int) {
-		if cur_y >= maxx - 1 - SPACE_FROM_EDGES do textbuffer_view_move(tb, .Down)
+	scroll_down_if_on_edge :: #force_inline proc(tb: ^TextBuffer, cur_y: uint, maxy: uint) {
+		if cur_y >= maxy - 1 - SPACE_FROM_EDGES do textbuffer_view_move(tb, .Down)
 	}
 
 	switch dir {
@@ -200,7 +198,7 @@ textbuffer_cursor_move :: proc(tb: ^TextBuffer, dir: Direction) {
 			tb.row += 1
 			tb.curr_row = tb.curr_row.next
 		}
-		scroll_down_if_on_edge(tb, cur_y, h)
+		scroll_down_if_on_edge(tb, cur_y, winsize.h)
 
 	case .Left:
 		if tb.col > 0 {
@@ -209,24 +207,24 @@ textbuffer_cursor_move :: proc(tb: ^TextBuffer, dir: Direction) {
 		} else if tb.row > 0 {
 			tb.row -= 1
 			tb.curr_row = tb.curr_row.prev
-			tb.col = c.int(len(textbuffer_row_at(tb^, tb.row).str))
+			tb.col = len(textbuffer_row_at(tb, tb.row).str)
 			scroll_up_if_on_edge(tb, cur_y)
 		}
 
 	case .Right:
-		if int(tb.col) < len(textbuffer_row_at(tb^, tb.row).str) {
+		if int(tb.col) < len(textbuffer_row_at(tb, tb.row).str) {
 			tb.col += 1
 			// wrap around to next line
 		} else if tb.row < tb.rowlen - 1 {
 			tb.row += 1
 			tb.col = 0
 			tb.curr_row = tb.curr_row.next
-			scroll_down_if_on_edge(tb, cur_y, h)
+			scroll_down_if_on_edge(tb, cur_y, winsize.h)
 		}
 	}
 
 	// -- prevent cursor from overflowing row
-	collen := c.int(len(textbuffer_row_at(tb^, tb.row).str))
+	collen: uint = len(textbuffer_row_at(tb, tb.row).str)
 	if tb.col > collen {
 		tb.col = collen if collen >= 0 else 0
 	}
@@ -234,7 +232,7 @@ textbuffer_cursor_move :: proc(tb: ^TextBuffer, dir: Direction) {
 
 // inserts a new char into the current row and column in the textbuffer
 textbuffer_append_char :: proc(tb: ^TextBuffer, char: rune) {
-	curr_row := textbuffer_row_at(tb^, tb.row)
+	curr_row := textbuffer_row_at(tb, tb.row)
 
 	char_str := utf8.runes_to_string([]rune{char})
 	defer delete(char_str)
@@ -262,16 +260,16 @@ textbuffer_append_char :: proc(tb: ^TextBuffer, char: rune) {
 
 // removes char in the current row and column
 textbuffer_remove_char :: proc(tb: ^TextBuffer) {
-	curr_row := textbuffer_row_at(tb^, tb.row)
+	curr_row := textbuffer_row_at(tb, tb.row)
 	if tb.col > 0 {
 		curr_row.str = strings.join([]string{curr_row.str[:tb.col - 1], curr_row.str[tb.col:]}, "")
 		textbuffer_cursor_move(tb, .Left)
 	} else if tb.row > 0 {
-		curr_row := textbuffer_row_at(tb^, tb.row)
-		prev_row := textbuffer_row_at(tb^, tb.row - 1)
+		curr_row := textbuffer_row_at(tb, tb.row)
+		prev_row := textbuffer_row_at(tb, tb.row - 1)
 		// place cursor at the end of line before merge occurred
 		// merge lines
-		new_col := c.int(len(prev_row.str))
+		new_col: uint = len(prev_row.str)
 		prev_row.str = strings.join([]string{prev_row.str, curr_row.str}, "")
 		textbuffer_remove_row(tb)
 		tb.col = new_col
@@ -303,13 +301,13 @@ textbuffer_insert_row :: proc(tb: ^TextBuffer) {
 
 textbuffer_breakline :: proc(tb: ^TextBuffer) {
 	if tb.row < tb.rowlen {
-		curr_row := textbuffer_row_at(tb^, tb.row)
+		curr_row := textbuffer_row_at(tb, tb.row)
 		first_chunk := curr_row.str[:tb.col]
 		second_chunk := curr_row.str[tb.col:]
 		curr_row.str = first_chunk
 
 		textbuffer_insert_row(tb)
-		new_row := textbuffer_row_at(tb^, tb.row)
+		new_row := textbuffer_row_at(tb, tb.row)
 		new_row.str = strings.clone(second_chunk)
 	} else {
 		textbuffer_insert_row(tb)
@@ -329,7 +327,7 @@ textbuffer_remove_row :: proc(tb: ^TextBuffer) {
 }
 
 // returns the cursor coordinates relative to the start of the view buffer
-textbuffer_get_cursor_coordinates :: #force_inline proc(tb: TextBuffer) -> (y, x: c.int) {
+textbuffer_get_cursor_coordinates :: #force_inline proc(tb: ^TextBuffer) -> (y, x: uint) {
 	return tb.row - tb.view_start, tb.col
 }
 
@@ -341,100 +339,89 @@ Direction :: enum {
 }
 
 @(private)
-textbuffer_draw_linenum :: proc(tb: TextBuffer) {
-	nc.werase(tb.linewin)
-	defer nc.wrefresh(tb.linewin)
+textbuffer_draw_linenum :: proc(tb: ^TextBuffer) {
+	t.clear(&tb.linewin, .Everything)
+	defer t.blit(&tb.linewin)
 
 	line_num_bytes: [20]u8
 	linenum_end := tb.view_end if tb.view_end < tb.rowlen else tb.rowlen
 
-	active_line := nc.COLOR_PAIR(Pair_Active_Linenum)
-	inactive_line := nc.COLOR_PAIR(Pair_Linenum)
-
 	for n in tb.view_start ..< linenum_end {
 		if n == tb.row {
-			_, maxx := nc.getmaxyx(tb.linewin)
-			nc.wattron(tb.linewin, active_line)
+			// TODO: change line to grey
+			t.set_color_style(&tb.linewin, .Black, .White)
 
 			cur_y, _ := textbuffer_get_cursor_coordinates(tb)
-			for i in 0 ..< maxx do nc.mvwaddch(tb.linewin, cur_y, i, ' ')
+			t.move_cursor(&tb.linewin, cur_y, 0)
+			t.clear_line(&tb.linewin, .Everything)
 		} else {
-			nc.wattron(tb.linewin, inactive_line)
+			t.set_color_style(&tb.linewin, .White, nil)
 		}
-
-		defer nc.wattroff(tb.linewin, active_line if n == tb.row else inactive_line)
+		defer t.reset_styles(&tb.linewin)
 
 
 		mem.zero_slice(line_num_bytes[:])
 		line_num := fmt.bprintf(line_num_bytes[:], "%d  ", n + 1)
-		nc.mvwprintw(
-			tb.linewin,
-			n - tb.view_start,
-			c.int(LINE_WIDTH - len(line_num)),
-			"%s",
-			line_num,
-		)
+		t.move_cursor(&tb.linewin, n - tb.view_start, LINE_WIDTH - len(line_num))
+		t.write(&tb.linewin, line_num)
 	}
 }
 
 // TODO: handle tabs
 // TODO: scroll X axis when tb.col > win_width
-textbuffer_draw :: proc(tb: TextBuffer) {
-	nc.werase(tb.win)
-	defer nc.wrefresh(tb.win)
-
-	// color for regular lines
-	fg_color := nc.COLOR_PAIR(Pair_Foreground)
-	// color for the current line
-	curr_color := nc.COLOR_PAIR(Pair_Active_Linenum)
+textbuffer_draw :: proc(tb: ^TextBuffer) {
+	t.clear(&tb.win, .Everything)
 
 	// -- draw current line's highlight
 	cur_y, _ := textbuffer_get_cursor_coordinates(tb)
-	_, maxx := nc.getmaxyx(tb.win)
-	nc.wattron(tb.win, curr_color)
-	for i in 0 ..< maxx {
-		nc.mvwaddch(tb.win, cur_y, i, ' ')
-	}
-	nc.wattroff(tb.win, curr_color)
+	winsize := t.get_window_size(&tb.win)
+	t.set_color_style(&tb.win, .Black, .White)
+	t.move_cursor(&tb.win, cur_y, 0)
+	t.clear_line(&tb.win, .Everything)
+	t.reset_styles(&tb.win)
 
 	// -- draw buffer content
 	row_start := textbuffer_row_at(tb, tb.view_start)
 	iter := list.iterator_from_node(&row_start.node, TextBuffer_Row, "node")
-	row_idx: c.int
+	row_idx: uint
 	for row in list.iterate_next(&iter) {
 		defer row_idx += 1
 		if tb.view_start + row_idx > tb.view_end do break
 
-		line_color := curr_color if &row.node == tb.curr_row else fg_color
-		nc.wattron(tb.win, line_color)
-		defer nc.wattroff(tb.win, line_color)
+		if &row.node == tb.curr_row {
+			t.set_color_style(&tb.win, .Black, .White)
+		} else {
+			t.set_color_style(&tb.win, .Black, nil)
+		}
+		defer t.reset_styles(&tb.win)
 
-		nc.wmove(tb.win, row_idx, 0)
+		t.move_cursor(&tb.win, row_idx, 0)
 
 		for char in row.str {
 			if char == '\t' {
-				nc.waddch(tb.win, ' ')
+				t.write(&tb.win, ' ')
 			} else {
-				nc.waddch(tb.win, c.uint(char))
+				t.write(&tb.win, char)
 			}
 		}
 	}
 
 	// -- draw cursor
-	nc.wattron(tb.win, nc.A_REVERSE)
+	t.set_text_style(&tb.win, {.Inverted})
 	row := textbuffer_row_at(tb, tb.row).str
-	ch: c.uint
+	r: byte
 	switch {
-	case int(tb.col) > len(row) - 1:
-		ch = ' '
+	case tb.col > len(row) - 1:
+		r = ' '
 	case row[tb.col] == '\t':
-		ch = ' '
+		r = ' '
 	case:
-		ch = c.uint(row[tb.col])
+		r = row[tb.col]
 	}
 
-	nc.mvwaddch(tb.win, cur_y, tb.col, ch)
-	nc.wattroff(tb.win, nc.A_REVERSE)
+	t.move_cursor(&tb.win, cur_y, tb.col)
+	t.write(&tb.win, cast(rune)r)
+	t.reset_styles(&tb.win)
 	textbuffer_draw_linenum(tb)
 }
 
@@ -442,16 +429,17 @@ textbuffer_draw :: proc(tb: TextBuffer) {
 // only takes .Up and .Down as directions. Other directions will be ignored
 @(private)
 textbuffer_view_move :: proc(tb: ^TextBuffer, dir: Direction) {
-	h, w := nc.getmaxyx(tb.win)
+	winsize := t.get_window_size(&tb.win)
 	#partial switch dir {
 	case .Up:
 		if tb.view_start > 0 {tb.view_start -= 1} else {return}
 	case .Down:
-		if tb.view_start + h < tb.rowlen {tb.view_start += 1} else {return}
+		if tb.view_start + winsize.h < tb.rowlen {tb.view_start += 1} else {return}
 	case:
 		return
 	}
 
-	tb.view_end = tb.view_start + h
+	tb.view_end = tb.view_start + winsize.h
 	if tb.view_end > tb.rowlen do tb.view_end = tb.rowlen
 }
+

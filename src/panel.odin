@@ -1,45 +1,50 @@
 package main
 
-import nc "ncurses/src"
 import "core:c"
 import "core:fmt"
+import t "termcl"
 
 Panel :: struct {
-	win:      ^nc.Window,
+	win:      t.Window,
 	txbuffer: ^TextBuffer,
 }
 
 panel_new :: proc(target_buffer: ^TextBuffer) -> Panel {
-	h, w := nc.getmaxyx(nc.stdscr)
-	win := nc.newwin(1, w, h - 1, 0)
+	termsize := t.get_term_size()
+	win := t.init_window(termsize.h - 1, 0, 1, termsize.w)
 	return Panel{win = win, txbuffer = target_buffer}
 }
 
-panel_delete :: proc(panel: Panel) {
-	nc.delwin(panel.win)
+panel_delete :: proc(panel: ^Panel) {
+	t.destroy_window(&panel.win)
 }
 
-panel_fit_newsize :: proc(panel: Panel) {
-	h, w := nc.getmaxyx(nc.stdscr)
-	nc.wresize(panel.win, 1, w)
-	nc.mvwin(panel.win, h - 1, 0)
+panel_fit_newsize :: proc(panel: ^Panel) {
+	termsize := t.get_term_size()
+	t.resize_window(&panel.win, 1, termsize.w)
+	panel.win.y_offset = termsize.h - 1
+	panel.win.x_offset = 0
 }
 
-panel_draw :: proc(panel: Panel) {
-	nc.werase(panel.win)
-	defer nc.wrefresh(panel.win)
-	nc.wattron(panel.win ,nc.COLOR_PAIR(Pair_Bar))
-	defer nc.wattroff(panel.win, nc.COLOR_PAIR(Pair_Bar))
-
-	_, w := nc.getmaxyx(panel.win)
-	for i in 0 ..< w {
-		nc.waddch(panel.win, ' ')
-	}
+panel_draw :: proc(panel: ^Panel) {
+	t.clear(&panel.win, .Everything)
+	defer t.blit(&panel.win)
+	t.set_color_style(&panel.win, .Black, .White)
+	defer t.reset_styles(&panel.win)
 
 	filename := panel.txbuffer.filepath if panel.txbuffer.filepath != "" else "DRAFT"
-	nc.mvwprintw(panel.win, 0, 5, "%s", filename)
+	t.move_cursor(&panel.win, 0, 5)
+	t.write(&panel.win, filename)
 	line_info_bytes: [20]u8
-	line_info := fmt.bprintf(line_info_bytes[:], "%d:%d", panel.txbuffer.row + 1, panel.txbuffer.col + 1)
-	nc.mvwprintw(panel.win, 0, c.int(w) - 5 - c.int(len(line_info)), "%s", line_info)
-	nc.wrefresh(panel.win)
+	line_info := fmt.bprintf(
+		line_info_bytes[:],
+		"%d:%d",
+		panel.txbuffer.row + 1,
+		panel.txbuffer.col + 1,
+	)
+
+	winsize := t.get_window_size(&panel.win)
+	t.move_cursor(&panel.win, 0, winsize.w - 5 - len(line_info))
+	t.write(&panel.win, line_info)
 }
+
