@@ -27,11 +27,12 @@ panel_fit_newsize :: proc(panel: ^Panel) {
 }
 
 panel_draw :: proc(panel: ^Panel) {
-	t.clear(&panel.win, .Everything)
 	defer t.blit(&panel.win)
 	t.set_color_style(&panel.win, .Black, .White)
+	t.clear(&panel.win, .Everything)
 	defer t.reset_styles(&panel.win)
 
+	t.move_cursor(&panel.win, 0, 0)
 	filename := panel.txbuffer.filepath if panel.txbuffer.filepath != "" else "DRAFT"
 	t.move_cursor(&panel.win, 0, 5)
 	t.write(&panel.win, filename)

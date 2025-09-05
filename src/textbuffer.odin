@@ -70,7 +70,7 @@ textbuffer_new :: proc(filepath: string) -> (tb: TextBuffer, success: bool) {
 			win = t.init_window(0, LINE_WIDTH, termsize.h - 1, termsize.w - LINE_WIDTH),
 			linewin = t.init_window(0, 0, termsize.h - 1, LINE_WIDTH),
 			curr_row = rows.head,
-			view_end = termsize.h,
+			view_end = termsize.h - 1,
 		},
 		true
 }
@@ -105,7 +105,7 @@ textbuffer_view_update :: proc(tb: ^TextBuffer, cur_y: uint) {
 
 
 	tb.view_end = tb.view_start + winsize.h
-	if tb.view_end >= tb.rowlen do tb.view_end = tb.rowlen - 1
+	if tb.view_end >= tb.rowlen do tb.view_end = tb.rowlen
 }
 
 
@@ -371,6 +371,7 @@ textbuffer_draw_linenum :: proc(tb: ^TextBuffer) {
 // TODO: scroll X axis when tb.col > win_width
 textbuffer_draw :: proc(tb: ^TextBuffer) {
 	t.clear(&tb.win, .Everything)
+	defer t.blit(&tb.win)
 
 	// -- draw current line's highlight
 	cur_y, _ := textbuffer_get_cursor_coordinates(tb)
@@ -385,15 +386,18 @@ textbuffer_draw :: proc(tb: ^TextBuffer) {
 	iter := list.iterator_from_node(&row_start.node, TextBuffer_Row, "node")
 	row_idx: uint
 	for row in list.iterate_next(&iter) {
-		defer row_idx += 1
-		if tb.view_start + row_idx > tb.view_end do break
+		defer {
+			row_idx += 1
+			t.reset_styles(&tb.win)
+		}
+
+		if tb.view_start + row_idx >= tb.view_end do break
 
 		if &row.node == tb.curr_row {
 			t.set_color_style(&tb.win, .Black, .White)
 		} else {
-			t.set_color_style(&tb.win, .Black, nil)
+			t.set_color_style(&tb.win, .White, nil)
 		}
-		defer t.reset_styles(&tb.win)
 
 		t.move_cursor(&tb.win, row_idx, 0)
 
@@ -407,16 +411,13 @@ textbuffer_draw :: proc(tb: ^TextBuffer) {
 	}
 
 	// -- draw cursor
-	t.set_text_style(&tb.win, {.Inverted})
+	t.set_color_style(&tb.win, .Black, .Yellow)
 	row := textbuffer_row_at(tb, tb.row).str
-	r: byte
-	switch {
-	case tb.col > len(row) - 1:
-		r = ' '
-	case row[tb.col] == '\t':
-		r = ' '
-	case:
+	r: byte = ' '
+	if tb.col < len(row) {
 		r = row[tb.col]
+		// TODO: properly handle tabs
+		if row[tb.col] == '\t' do r = ' '
 	}
 
 	t.move_cursor(&tb.win, cur_y, tb.col)
